@@ -17,23 +17,33 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Contracts\Cache\ItemInterface;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
 
 // Controller va demander au manager (ici BookRepository) de faire la recherche en bdd
 class BookController extends AbstractController
 {
     // Route pour récupérer l'ensemble des livres
     #[Route('/api/books', name: 'app_book', methods: ['GET'])]
-    public function getAllBooks(BookRepository $bookRepository, SerializerInterface $serializer, Request $request): JsonResponse
+    public function getAllBooks(BookRepository $bookRepository, SerializerInterface $serializer, Request $request, TagAwareCacheInterface $cache): JsonResponse
     {
         $page = $request->get('page', 1); // Par défaut c'est la page 1 qui sera choisi
         $limit = $request->get('limit', 3);
 
-        $bookList = $bookRepository->findAllWithPagination($page, $limit);
+        $idCache = "getAllBooks-" . $page . "-" . $limit;  // Id représentant la requête reçue
 
-        // Une fois les données récupérées, il est nécessaire de les sérialiser (les transformer en json)
-        $jsonBookList = $serializer->serialize($bookList, 'json', ['groups' => 'getBooks']);
+        // On entre dans la fonction que si l'élément n'est pas encore présent dans le cache
+        // Ici on met en cache la version déjà converti et dans laquelle l'auteur a bien été spécifié (permet d'éviter le lazy loading)
+        // IL EXISTE UNE AUTRE TECHNIQUE PLUS SIMPLE MAIS MOINS OPTIMISÉE (VOIR COURS)
+        $JsonBookList = $cache->get($idCache, function (ItemInterface $item) use ($bookRepository, $page, $limit, $serializer) {
+            echo ("L'ELEMENT N'EST PAS ENCORE EN CACHE !\n");
+            $item->tag("booksCache");
+            $bookList = $bookRepository->findAllWithPagination($page, $limit);
+            // Une fois les données récupérées, il est nécessaire de les sérialiser (les transformer en json)
+            return $serializer->serialize($bookList, 'json', ['groups' => 'getBooks']);
+        });
 
-        return new JsonResponse($jsonBookList, Response::HTTP_OK, [], true);
+        return new JsonResponse($JsonBookList, Response::HTTP_OK, [], true);
     }
 
     // Route pour récupérer un livre identifié par son id
@@ -48,8 +58,10 @@ class BookController extends AbstractController
 
     #[Route('/api/books/{id}', name: 'deleteBook', methods: ['DELETE'])]
     // Ici on a besoin de l'entitymanager pour faire une opération sur les données (suppression)
-    public function deleteBook(Book $book, EntityManagerInterface $em): JsonResponse
+    public function deleteBook(Book $book, EntityManagerInterface $em, TagAwareCacheInterface $cache): JsonResponse
     {
+        // Avant chaque opération sur une donnée mise en cache il faut invalider ces dernières pour permettre leur recalcul
+        $cache->invalidateTags(["booksCache"]);
         $em->remove($book);
         $em->flush();
         return new JsonResponse(null, Response::HTTP_NO_CONTENT);

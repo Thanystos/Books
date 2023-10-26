@@ -15,6 +15,7 @@ use Symfony\Component\Serializer\SerializerInterface;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 // Controller va demander au manager (ici BookRepository) de faire la recherche en bdd
 class BookController extends AbstractController
@@ -52,24 +53,26 @@ class BookController extends AbstractController
     }
 
     #[Route('/api/books', name: "createBook", methods: ['POST'])]
-    // On a besoin de récupérer le contenu de la requête
-    public function createBook(Request $request, SerializerInterface $serializer, EntityManagerInterface $em, UrlGeneratorInterface $urlGenerator, AuthorRepository $authorRepository): JsonResponse
+    public function createBook(Request $request, SerializerInterface $serializer, EntityManagerInterface $em, UrlGeneratorInterface $urlGenerator, AuthorRepository $authorRepository, ValidatorInterface $validator): JsonResponse
     {
-        // On transforme notre requête json en données et on crée un Book avec
         $book = $serializer->deserialize($request->getContent(), Book::class, 'json');
 
-        // Avant l'enregistrement du nouveau livre on va tenter de trouver l'auteur défini par l'id récupéré dans la requête
+        // On vérifie les erreurs
+        $errors = $validator->validate($book);
+
+        if ($errors->count() > 0) {
+            return new JsonResponse($serializer->serialize($errors, 'json'), JsonResponse::HTTP_BAD_REQUEST, [], true);
+        }
+
         $content = $request->toArray();
         $idAuthor = $content['idAuthor'] ?? -1;
 
-        // Le managaer des auteurs va tenter de retrouver l'auteur avec l'id donné et l'enregistré pour notre livre
         $book->setAuthor($authorRepository->find($idAuthor));
 
         $em->persist($book);
         $em->flush();
 
         $jsonBook = $serializer->serialize($book, 'json', ['groups' => 'getBooks']);
-        // Une fois une ressource créée, l'usage veut qu'on envoie aussi la location de cette dite ressource
         $location = $urlGenerator->generate('detailBook', ['id' => $book->getId()], UrlGeneratorInterface::ABSOLUTE_URL);
 
         return new JsonResponse($jsonBook, Response::HTTP_CREATED, ["Location" => $location], true);

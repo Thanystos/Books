@@ -23,10 +23,12 @@ class BookController extends AbstractController
 {
     // Route pour récupérer l'ensemble des livres
     #[Route('/api/books', name: 'app_book', methods: ['GET'])]
-    public function getAllBooks(BookRepository $bookRepository, SerializerInterface $serializer): JsonResponse
+    public function getAllBooks(BookRepository $bookRepository, SerializerInterface $serializer, Request $request): JsonResponse
     {
+        $page = $request->get('page', 1); // Par défaut c'est la page 1 qui sera choisi
+        $limit = $request->get('limit', 3);
 
-        $bookList = $bookRepository->findAll();
+        $bookList = $bookRepository->findAllWithPagination($page, $limit);
 
         // Une fois les données récupérées, il est nécessaire de les sérialiser (les transformer en json)
         $jsonBookList = $serializer->serialize($bookList, 'json', ['groups' => 'getBooks']);

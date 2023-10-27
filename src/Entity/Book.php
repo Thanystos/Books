@@ -5,8 +5,43 @@ namespace App\Entity;
 use App\Repository\BookRepository;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
-use Symfony\Component\Serializer\Annotation\Groups;
+// On a changé de sérializer pour l'autodécouvrabilité. On change ici aussi du coup.
+// use Symfony\Component\Serializer\Annotation\Groups;
+use JMS\Serializer\Annotation\Groups;
 use Symfony\Component\Validator\Constraints as Assert;
+use Hateoas\Configuration\Annotation as Hateoas;
+
+// Hateoas permet de me fournir les url des actions associées aux ressources récupérées
+/**
+ * @Hateoas\Relation(
+ *      "self",
+ *      href = @Hateoas\Route(
+ *          "detailBook",
+ *          parameters = { "id" = "expr(object.getId())" }
+ *      ),
+ *      exclusion = @Hateoas\Exclusion(groups="getBooks")
+ * )
+ * 
+ *  @Hateoas\Relation(
+ *      "delete",
+ *      href = @Hateoas\Route(
+ *          "deleteBook",
+ *          parameters = { "id" = "expr(object.getId())" },
+ *      ),
+ *      exclusion = @Hateoas\Exclusion(groups="getBooks", excludeIf = "expr(not is_granted('ROLE_ADMIN'))"),
+ * )
+ *
+ * @Hateoas\Relation(
+ *      "update",
+ *      href = @Hateoas\Route(
+ *          "updateBook",
+ *          parameters = { "id" = "expr(object.getId())" },
+ *      ),
+ *      exclusion = @Hateoas\Exclusion(groups="getBooks", excludeIf = "expr(not is_granted('ROLE_ADMIN'))"),
+ * )
+ *
+ */
+
 
 #[ORM\Entity(repositoryClass: BookRepository::class)]
 class Book
@@ -14,21 +49,21 @@ class Book
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
-    #[Groups("getBooks")]
+    #[Groups(["getBooks", "getAuthor"])] // On peut créer d'autres groupes au besoin
     private ?int $id = null;
 
     #[ORM\Column(type: 'string', length: 255)]
-    #[Groups(["getBooks", "getAuthors"])]
+    #[Groups(["getBooks", "getAuthor"])]
     #[Assert\NotBlank(message: "Le titre du livre est obligatoire")]
     #[Assert\Length(min: 1, max: 255, minMessage: "Le titre doit faire au moins {{ limit }} caractères", maxMessage: "Le titre ne peut pas faire plus de {{ limit }} caractères")]
     private ?string $title = null;
 
     #[ORM\Column(type: Types::TEXT, nullable: true)]
-    #[Groups("getBooks")]
+    #[Groups(["getBooks", "getAuthor"])]
     private ?string $coverText = null;
 
     #[ORM\ManyToOne(inversedBy: 'books')]
-    #[Groups("getBooks")]
+    #[Groups(["getBooks"])]
     private ?Author $author = null;
 
     public function getId(): ?int

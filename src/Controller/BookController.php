@@ -7,12 +7,15 @@ use App\Entity\Book;
 use App\Repository\AuthorRepository;
 use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
+use JMS\Serializer\SerializationContext;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\IsGranted;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Annotation\Route;
-use Symfony\Component\Serializer\SerializerInterface;
+// Dans le but de rendre notre API autodécouvrable, on utilisra un autre sérializer
+// use Symfony\Component\Serializer\SerializerInterface;
+use JMS\Serializer\SerializerInterface; // Le nouveau serializer
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
@@ -39,11 +42,26 @@ class BookController extends AbstractController
             echo ("L'ELEMENT N'EST PAS ENCORE EN CACHE !\n");
             $item->tag("booksCache");
             $bookList = $bookRepository->findAllWithPagination($page, $limit);
+            // Nécessaire pour la sérialization
+            $context = SerializationContext::create()->setGroups(["getBooks"]);
             // Une fois les données récupérées, il est nécessaire de les sérialiser (les transformer en json)
-            return $serializer->serialize($bookList, 'json', ['groups' => 'getBooks']);
+            return $serializer->serialize($bookList, 'json', $context);
         });
 
         return new JsonResponse($JsonBookList, Response::HTTP_OK, [], true);
+    }
+
+    /**
+     * Méthode temporaire pour vider le cache. 
+     *
+     * @param TagAwareCacheInterface $cache
+     * @return void
+     */
+    #[Route('/api/books/clearCache', name: "clearCache", methods: ['GET'])]
+    public function clearCache(TagAwareCacheInterface $cache)
+    {
+        $cache->invalidateTags(["booksCache"]);
+        return new JsonResponse("Cache Vidé", JsonResponse::HTTP_OK);
     }
 
     // Route pour récupérer un livre identifié par son id
@@ -52,15 +70,17 @@ class BookController extends AbstractController
     #[Route('api/books/{id}', name: 'detailBook', methods: ['GET'])]
     public function getDetailBook(Book $book, SerializerInterface $serializer)
     {
-        $jsonBook = $serializer->serialize($book, 'json', ['groups' => 'getBooks']);
+        $context = SerializationContext::create()->setGroups(["getBooks"]);
+        $jsonBook = $serializer->serialize($book, 'json', $context);
         return new JsonResponse($jsonBook, Response::HTTP_OK, [], true);
     }
 
     #[Route('/api/books/{id}', name: 'deleteBook', methods: ['DELETE'])]
     // Ici on a besoin de l'entitymanager pour faire une opération sur les données (suppression)
+    #[IsGranted('ROLE_ADMIN', message: 'Vous n\'avez pas les droits suffisants pour supprimer un livre')]
     public function deleteBook(Book $book, EntityManagerInterface $em, TagAwareCacheInterface $cache): JsonResponse
     {
-        // Avant chaque opération sur une donnée mise en cache il faut invalider ces dernières pour permettre leur recalcul
+        // À chaque opération sur une donnée mise en cache il faut invalider ces dernières pour permettre leur recalcul (avant ou après le flush)
         $cache->invalidateTags(["booksCache"]);
         $em->remove($book);
         $em->flush();
@@ -70,7 +90,7 @@ class BookController extends AbstractController
     #[Route('/api/books', name: "createBook", methods: ['POST'])]
     // Grâce à la mise en place de la sécurité, je peux maintenant facilement restreindre certaines de mes routes
     #[IsGranted('ROLE_ADMIN', message: 'Vous n\'avez pas les droits suffisants pour créer un livre')]
-    public function createBook(Request $request, SerializerInterface $serializer, EntityManagerInterface $em, UrlGeneratorInterface $urlGenerator, AuthorRepository $authorRepository, ValidatorInterface $validator): JsonResponse
+    public function createBook(Request $request, SerializerInterface $serializer, EntityManagerInterface $em, UrlGeneratorInterface $urlGenerator, AuthorRepository $authorRepository, ValidatorInterface $validator, TagAwareCacheInterface $cache): JsonResponse
     {
         $book = $serializer->deserialize($request->getContent(), Book::class, 'json');
 
@@ -89,27 +109,42 @@ class BookController extends AbstractController
         $em->persist($book);
         $em->flush();
 
-        $jsonBook = $serializer->serialize($book, 'json', ['groups' => 'getBooks']);
+        $cache->invalidateTags(["booksCache"]);
+
+        $context = SerializationContext::create()->setGroups(["getBooks"]);
+        $jsonBook = $serializer->serialize($book, 'json', $context);
         $location = $urlGenerator->generate('detailBook', ['id' => $book->getId()], UrlGeneratorInterface::ABSOLUTE_URL);
 
         return new JsonResponse($jsonBook, Response::HTTP_CREATED, ["Location" => $location], true);
     }
 
-    #[Route('/api/books/{id}', name: "uptateBook", methods: ['PUT'])]
+    #[Route('/api/books/{id}', name: "updateBook", methods: ['PUT'])]
     // CurrentBook représente l'état du livre avant sa modification
-    public function updateBook(Request $request, SerializerInterface $serializer, Book $currentBook, EntityManagerInterface $em, AuthorRepository $authorRepository)
+    public function updateBook(Request $request, SerializerInterface $serializer, Book $currentBook, EntityManagerInterface $em, AuthorRepository $authorRepository, ValidatorInterface $validator, TagAwareCacheInterface $cache)
     {
-        // AbstractNormalizer va nous permettre d'écrire directement à l'intérieur de notre livre existant les modifications
-        $updateBook = $serializer->deserialize($request->getContent(), Book::class, 'json', [AbstractNormalizer::OBJECT_TO_POPULATE => $currentBook]);
+        // Je crée un livre qui prend la forme de l'entité book rempli avec les paramètres de la requête
+        $newBook = $serializer->deserialize($request->getContent(), Book::class, 'json');
+
+        // Le livre qui va être modifié récupère les nouvelles informations définies dans newbook
+        $currentBook->setTitle($newBook->getTitle());
+        $currentBook->setCoverText($newBook->getCoverText());
+
+        // On vérifie les erreurs
+        $errors = $validator->validate($currentBook);
+        if ($errors->count() > 0) {
+            return new JsonResponse($serializer->serialize($errors, 'json'), JsonResponse::HTTP_BAD_REQUEST, [], true);
+        }
 
         // Il nous faudra à nouveau rechercher l'auteur associé à l'id passé en requête
         $content = $request->toArray();
         $idAuthor = $content['idAuthor'] ?? -1;
 
-        $updateBook->setAuthor($authorRepository->find($idAuthor));
+        $currentBook->setAuthor($authorRepository->find($idAuthor));
 
-        $em->persist($updateBook);
+        $em->persist($currentBook);
         $em->flush();
+
+        $cache->invalidateTags(["booksCache"]);
 
         return new JsonResponse(null, JsonResponse::HTTP_NO_CONTENT);
     }

@@ -5,6 +5,7 @@ namespace App\Controller;
 use App\Repository\BookRepository;
 use App\Entity\Book;
 use App\Repository\AuthorRepository;
+use App\Service\VersioningService;
 use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
 use JMS\Serializer\SerializationContext;
@@ -68,9 +69,16 @@ class BookController extends AbstractController
     // Le bundle param converter nous permet de ne même pas avoir besoin de récupérer notre id
     // On peut passer immédiatement à la sérialisation sans même avoir à questionner le manager (repository)
     #[Route('api/books/{id}', name: 'detailBook', methods: ['GET'])]
-    public function getDetailBook(Book $book, SerializerInterface $serializer)
+    public function getDetailBook(Book $book, SerializerInterface $serializer, VersioningService $versioningService)
     {
+        // Récupération de la version depuis le header grâce à notre fichier VersioningService
+        $version = $versioningService->getVersion();
         $context = SerializationContext::create()->setGroups(["getBooks"]);
+        $context->setVersion($version);
+
+        // Plutôt que de spécifier la version souhaitée ici, on utilisera à présent les header
+        // $context->setVersion("2.0");  Si la version spécifié ici n'est pas conforme à celle nécessaire pour un champ, alors ce dernier n'apparaîtra pas
+
         $jsonBook = $serializer->serialize($book, 'json', $context);
         return new JsonResponse($jsonBook, Response::HTTP_OK, [], true);
     }

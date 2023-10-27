@@ -9,6 +9,7 @@ use Doctrine\ORM\Mapping as ORM;
 // On a changé de sérializer pour l'autodécouvrabilité. On change ici aussi du coup.
 // use Symfony\Component\Serializer\Annotation\Groups;
 use JMS\Serializer\Annotation\Groups;
+use Hateoas\Configuration\Annotation as Hateoas;
 
 /**
  * @Hateoas\Relation(
